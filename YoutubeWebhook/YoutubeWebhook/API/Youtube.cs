@@ -1,64 +1,54 @@
-﻿using System;
+﻿using Newtonsoft.Json;
+using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Linq;
 using System.Net.Http;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
+using System.Web;
 using YoutubeWebhook.Models;
 
 namespace YoutubeWebhook.API
 {
 	public static class Youtube
 	{
-		public static readonly Regex VideoTitle = new Regex(@"<a id=""video - title"" class="".+? title = ""(.+?)"" href = ""(.+?)""");
-		public static readonly Regex VideoThumbnail = new Regex(@"<img id=""img"" class="".+? "" alt="""" width=""210"" src=""(https://i.ytimg.com/vi/.+?)"">");
+		public static readonly Regex VideoJsonRegex = new Regex(@"({""gridVideoRenderer"":{.+}})],""continuations"":");
 
-		public static async Task<YoutubeVideo[]> GetChannelVideosAsync(string channelName)
+		public static async Task<GridVideoRenderer[]> GetChannelVideosAsync(string channelName)
 		{
 			var httpClient = new HttpClient();
 			var response = await httpClient.GetAsync($"https://www.youtube.com/c/{channelName}/videos");
+
 			if (!response.IsSuccessStatusCode)
 			{
-				return new YoutubeVideo[0];
+				return new GridVideoRenderer[0];
 			}
-			return FindVideos(await response.Content.ReadAsStringAsync());			
+
+			return FindVideos(await response.Content.ReadAsStringAsync());
 		}
 
-		private static async Task<YoutubeVideo> GetLatestVideoAsync(string channelName)
+		private static async Task<GridVideoRenderer> GetLatestVideoAsync(string channelName)
 		{
 			var channelVideos = await GetChannelVideosAsync(channelName);
 			if(channelVideos.Length < 1)
 			{
 				throw new Exception("No videos on channel!");
 			}
-			return channelVideos[0];
+			return channelVideos.First();
 		}
 
-		private static YoutubeVideo[] FindVideos(string rawHtml)
-		{
-			var videoTitles = VideoTitle.Matches(rawHtml);
-			var videoThumbnails = VideoThumbnail.Matches(rawHtml);
-
-			if(videoTitles.Count != videoThumbnails.Count)
+		private static GridVideoRenderer[] FindVideos(string rawHtml)
+		{		
+			if (VideoJsonRegex.Match(rawHtml).Success)
 			{
-				throw new Exception("Parsing error!");
+
+				var jsonBody = VideoJsonRegex.Match(rawHtml).Groups[1].Value;
+				var gridVideoTabs = new JsonSerializer().Deserialize<YoutubeVideoBlock[]>(new JsonTextReader(new StringReader($"[{jsonBody}]")));
+				return gridVideoTabs.Select(i => i.GridVideoRenderer).ToArray();
 			}
-
-			var videos = new YoutubeVideo[videoTitles.Count - 1];
-			for (int x = 0; x < videoTitles.Count; x++)
-			{
-				var videoTitleCapGroups = videoTitles[x].Groups;
-				var videoThumbnailCapGroups = videoThumbnails[x].Groups;
-
-				videos[x] = new YoutubeVideo()
-				{
-					Title = videoTitleCapGroups[1].Value,
-					Source = $"httpss://youtube.com/{videoTitleCapGroups[2]}",
-					Thumbnail = videoThumbnailCapGroups[1].Value
-				};
-			}
-
-			return videos;
+			return new GridVideoRenderer[0];
 		}
 	}
 }
